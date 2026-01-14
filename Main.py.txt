@@ -1,0 +1,78 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Dict
+
+app = FastAPI(title="API Distribución de Diputados")
+
+class ElectionInput(BaseModel):
+    total_seats: int
+    votes: Dict[str, int]
+
+def calculate_hare(total_seats: int, votes: Dict[str, int]) -> Dict[str, int]:
+    total_votes = sum(votes.values())
+    if total_votes == 0:
+        raise ValueError("Total de votos no puede ser 0")
+
+    quota = total_votes / total_seats
+    seats = {}
+    remainders = {}
+
+    for party, vote_count in votes.items():
+        seats[party] = int(vote_count // quota)
+        remainders[party] = vote_count - (seats[party] * quota)
+
+    assigned_seats = sum(seats.values())
+    remaining_seats = total_seats - assigned_seats
+
+    for party, _ in sorted(remainders.items(), key=lambda x: x[1], reverse=True):
+        if remaining_seats == 0:
+            break
+        seats[party] += 1
+        remaining_seats -= 1
+
+    return seats
+
+def calculate_dhondt(total_seats: int, votes: Dict[str, int]) -> Dict[str, int]:
+    quotients = []
+    for party, vote_count in votes.items():
+        for divisor in range(1, total_seats + 1):
+            quotients.append((party, vote_count / divisor))
+
+    quotients.sort(key=lambda x: x[1], reverse=True)
+    seats = {party: 0 for party in votes}
+
+    for i in range(total_seats):
+        party = quotients[i][0]
+        seats[party] += 1
+
+    return seats
+
+@app.post("/api/v1/seats/hare")
+def hare_method(data: ElectionInput):
+    try:
+        return {"method": "hare", "results": calculate_hare(data.total_seats, data.votes)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/v1/seats/dhondt")
+def dhondt_method(data: ElectionInput):
+    try:
+        return {"method": "dhondt", "results": calculate_dhondt(data.total_seats, data.votes)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/v1/seats/compare")
+def compare_methods(data: ElectionInput):
+    try:
+        hare = calculate_hare(data.total_seats, data.votes)
+        dhondt = calculate_dhondt(data.total_seats, data.votes)
+
+        return {
+            "total_seats": data.total_seats,
+            "comparison": {
+                party: {"hare": hare.get(party, 0), "dhondt": dhondt.get(party, 0)}
+                for party in data.votes
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
